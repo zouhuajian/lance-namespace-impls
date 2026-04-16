@@ -5,7 +5,7 @@ Tests for Lance Hive2 Namespace implementation.
 import pytest
 from unittest.mock import MagicMock, patch
 
-from lance_namespace_impls.hive2 import Hive2Namespace
+from lance_namespace_impls.hive2 import Hive2Namespace, HiveMetastoreClientWrapper
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     DescribeNamespaceRequest,
@@ -65,6 +65,30 @@ class TestHive2Namespace:
                 mock_client.assert_called_once_with(
                     "thrift://localhost:9083", "user:group1,group2"
                 )
+
+    def test_initialization_accepts_multiple_uris_in_uri(self):
+        """Test namespace accepts comma-separated metastore URIs in `uri`."""
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+            with patch(
+                "lance_namespace_impls.hive2.HiveMetastoreClientWrapper"
+            ) as mock_client:
+                namespace = Hive2Namespace(
+                    uri="thrift://host1:9083,thrift://host2:9084",
+                    root="/tmp/warehouse",
+                )
+
+                assert namespace.uri == "thrift://host1:9083,thrift://host2:9084"
+
+                _ = namespace.client
+                mock_client.assert_called_once_with(
+                    "thrift://host1:9083,thrift://host2:9084", None
+                )
+
+    def test_initialization_rejects_uris_property(self):
+        """Test namespace rejects the removed `uris` property."""
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+            with pytest.raises(ValueError, match="Use `uri` instead of `uris`"):
+                Hive2Namespace(uris="thrift://host1:9083,thrift://host2:9084")
 
     def test_initialization_without_hive_deps(self):
         """Test that initialization fails gracefully without Hive dependencies."""
@@ -320,3 +344,33 @@ class TestHive2Namespace:
                     mock_client.assert_called_once_with(
                         "thrift://localhost:9083", "user:group1,group2"
                     )
+
+
+class TestHiveMetastoreClientWrapper:
+    """Tests for Hive2 metastore client endpoint selection."""
+
+    def test_uses_first_available_uri_when_first_endpoint_fails(self):
+        """Test that comma-separated URIs are tried in order until one opens."""
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+            with patch("lance_namespace_impls.hive2.Client") as mock_client_class:
+                first_client = MagicMock()
+                first_client.open.side_effect = RuntimeError("first endpoint down")
+                second_client = MagicMock()
+                mock_client_class.side_effect = [first_client, second_client]
+
+                wrapper = HiveMetastoreClientWrapper(
+                    "thrift://host1:9083,thrift://host2:9084",
+                    "user:group1,group2",
+                )
+
+                with wrapper as client:
+                    assert client is second_client
+
+                assert mock_client_class.call_args_list == [
+                    ((), {"host": "host1", "port": 9083}),
+                    ((), {"host": "host2", "port": 9084}),
+                ]
+                first_client.close.assert_called_once()
+                second_client.open.assert_called_once()
+                second_client.set_ugi.assert_called_once_with("user", "group1,group2")
+                second_client.close.assert_called_once()

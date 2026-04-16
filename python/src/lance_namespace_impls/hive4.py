@@ -52,6 +52,10 @@ from lance_namespace_impls.hive3 import (
     _as_bool,
     _get_kerberos_service_name,
 )
+from lance_namespace_impls.hive_uri import (
+    DEFAULT_HIVE_METASTORE_URI,
+    get_hive_metastore_uri,
+)
 from lance_namespace_impls.rest_client import InvalidInputException
 
 try:
@@ -106,7 +110,7 @@ class Hive4Namespace(LanceNamespace):
                 "pip install 'lance-namespace[hive4]'"
             )
 
-        self.uri = properties.get("uri", "thrift://localhost:9083")
+        self.uri = get_hive_metastore_uri(properties, DEFAULT_HIVE_METASTORE_URI)
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
@@ -156,7 +160,9 @@ class Hive4Namespace(LanceNamespace):
         return _prepend_catalog_to_db_name(catalog, database)
 
     def _get_database(self, client, catalog: str, database: str):
-        return client.get_database(self._get_database_name_for_legacy_rpc(catalog, database))
+        return client.get_database(
+            self._get_database_name_for_legacy_rpc(catalog, database)
+        )
 
     def _get_database_names(self, client, catalog: str) -> List[str]:
         if hasattr(client, "get_databases"):
@@ -164,7 +170,9 @@ class Hive4Namespace(LanceNamespace):
         return client.get_all_databases()
 
     def _get_all_tables(self, client, catalog: str, database: str) -> List[str]:
-        return client.get_all_tables(self._get_database_name_for_legacy_rpc(catalog, database))
+        return client.get_all_tables(
+            self._get_database_name_for_legacy_rpc(catalog, database)
+        )
 
     def _get_table(self, client, catalog: str, database: str, table_name: str):
         if HIVE4_REQUESTS_AVAILABLE and hasattr(client, "get_table_req"):
@@ -184,7 +192,9 @@ class Hive4Namespace(LanceNamespace):
         if not table_names:
             return []
 
-        if HIVE4_REQUESTS_AVAILABLE and hasattr(client, "get_table_objects_by_name_req"):
+        if HIVE4_REQUESTS_AVAILABLE and hasattr(
+            client, "get_table_objects_by_name_req"
+        ):
             result = client.get_table_objects_by_name_req(
                 GetTablesRequest(dbName=database, tblNames=table_names, catName=catalog)
             )

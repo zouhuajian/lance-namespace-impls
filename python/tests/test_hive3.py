@@ -143,6 +143,34 @@ class TestHive3Namespace:
                     kerberos_client_principal=None,
                 )
 
+    def test_initialization_accepts_multiple_uris_in_uri(self):
+        """Test namespace accepts comma-separated metastore URIs in `uri`."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with patch(
+                "lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"
+            ) as mock_client:
+                namespace = Hive3Namespace(
+                    uri="thrift://host1:9083,thrift://host2:9084",
+                    root="/tmp/warehouse",
+                )
+
+                assert namespace.uri == "thrift://host1:9083,thrift://host2:9084"
+
+                _ = namespace.client
+                mock_client.assert_called_once_with(
+                    "thrift://host1:9083,thrift://host2:9084",
+                    None,
+                    sasl_enabled=False,
+                    kerberos_service_name="hive",
+                    kerberos_client_principal=None,
+                )
+
+    def test_initialization_rejects_uris_property(self):
+        """Test namespace rejects the removed `uris` property."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with pytest.raises(ValueError, match="Use `uri` instead of `uris`"):
+                Hive3Namespace(uris="thrift://host1:9083,thrift://host2:9084")
+
     def test_initialization_with_kerberos_sasl(self):
         """Test namespace initialization with Kerberos SASL enabled."""
         with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
@@ -200,10 +228,7 @@ class TestHive3Namespace:
             == "hive-metastore/_HOST@EXAMPLE.COM"
         )
         assert response.properties["kerberos.service-name"] == "hive-metastore"
-        assert (
-            response.properties["kerberos.client-principal"]
-            == "alice@EXAMPLE.COM"
-        )
+        assert response.properties["kerberos.client-principal"] == "alice@EXAMPLE.COM"
 
     def test_explicit_kerberos_service_name_override(self):
         """Test that an explicit service name wins over principal-derived values."""
@@ -537,6 +562,32 @@ class TestHive3MetastoreClientWrapper:
                 mock_client.open.assert_called_once()
                 mock_client.set_ugi.assert_called_once_with("user", "group1,group2")
                 mock_client.close.assert_called_once()
+
+    def test_uses_first_available_uri_when_first_endpoint_fails(self):
+        """Test that wrapper fails over across comma-separated URIs in order."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with patch("lance_namespace_impls.hive3.Client") as mock_client_class:
+                first_client = MagicMock()
+                first_client.open.side_effect = RuntimeError("first endpoint down")
+                second_client = MagicMock()
+                mock_client_class.side_effect = [first_client, second_client]
+
+                wrapper = Hive3MetastoreClientWrapper(
+                    "thrift://host1:9083,thrift://host2:9084",
+                    "user:group1,group2",
+                )
+
+                with wrapper as client:
+                    assert client is second_client
+
+                assert mock_client_class.call_args_list == [
+                    ((), {"host": "host1", "port": 9083}),
+                    ((), {"host": "host2", "port": 9084}),
+                ]
+                first_client.close.assert_called_once()
+                second_client.open.assert_called_once()
+                second_client.set_ugi.assert_called_once_with("user", "group1,group2")
+                second_client.close.assert_called_once()
 
     def test_uses_kerberos_client_when_sasl_enabled(self):
         """Test that SASL-enabled connections use the Kerberos transport."""

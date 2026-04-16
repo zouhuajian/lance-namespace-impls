@@ -80,14 +80,46 @@ class TestHive4Namespace:
                     kerberos_client_principal=None,
                 )
 
+    def test_initialization_accepts_multiple_uris_in_uri(self):
+        with patch("lance_namespace_impls.hive4.HIVE_AVAILABLE", True):
+            with patch(
+                "lance_namespace_impls.hive4.Hive4MetastoreClientWrapper"
+            ) as mock_client:
+                namespace = Hive4Namespace(
+                    uri="thrift://host1:9083,thrift://host2:9084",
+                    root="/tmp/warehouse",
+                )
+
+                assert namespace.uri == "thrift://host1:9083,thrift://host2:9084"
+
+                _ = namespace.client
+                mock_client.assert_called_once_with(
+                    "thrift://host1:9083,thrift://host2:9084",
+                    None,
+                    sasl_enabled=False,
+                    kerberos_service_name="hive",
+                    kerberos_client_principal=None,
+                )
+
+    def test_initialization_rejects_uris_property(self):
+        with patch("lance_namespace_impls.hive4.HIVE_AVAILABLE", True):
+            with pytest.raises(ValueError, match="Use `uri` instead of `uris`"):
+                Hive4Namespace(uris="thrift://host1:9083,thrift://host2:9084")
+
     def test_list_namespaces_catalog_level_uses_catalog_aware_pattern(
         self, hive_namespace, mock_hive_client
     ):
         mock_client_instance = MagicMock()
-        mock_client_instance.get_databases.return_value = ["default", "test_db", "prod_db"]
+        mock_client_instance.get_databases.return_value = [
+            "default",
+            "test_db",
+            "prod_db",
+        ]
         mock_hive_client.__enter__.return_value = mock_client_instance
 
-        response = hive_namespace.list_namespaces(ListNamespacesRequest(id=["analytics"]))
+        response = hive_namespace.list_namespaces(
+            ListNamespacesRequest(id=["analytics"])
+        )
 
         assert response.namespaces == ["test_db", "prod_db"]
         mock_client_instance.get_databases.assert_called_once_with("@analytics#")
@@ -118,13 +150,25 @@ class TestHive4Namespace:
         self, hive_namespace, mock_hive_client
     ):
         mock_client_instance = MagicMock()
-        mock_client_instance.get_all_tables.return_value = ["table1", "table2", "table3"]
-        mock_client_instance.get_table_objects_by_name_req.return_value = SimpleNamespace(
-            tables=[
-                SimpleNamespace(tableName="table1", parameters={"table_type": "lance"}),
-                SimpleNamespace(tableName="table2", parameters={"other_type": "OTHER"}),
-                SimpleNamespace(tableName="table3", parameters={"table_type": "lance"}),
-            ]
+        mock_client_instance.get_all_tables.return_value = [
+            "table1",
+            "table2",
+            "table3",
+        ]
+        mock_client_instance.get_table_objects_by_name_req.return_value = (
+            SimpleNamespace(
+                tables=[
+                    SimpleNamespace(
+                        tableName="table1", parameters={"table_type": "lance"}
+                    ),
+                    SimpleNamespace(
+                        tableName="table2", parameters={"other_type": "OTHER"}
+                    ),
+                    SimpleNamespace(
+                        tableName="table3", parameters={"table_type": "lance"}
+                    ),
+                ]
+            )
         )
         mock_hive_client.__enter__.return_value = mock_client_instance
 
@@ -135,7 +179,9 @@ class TestHive4Namespace:
                 )
 
         assert response.tables == ["table1", "table3"]
-        mock_client_instance.get_all_tables.assert_called_once_with("@analytics#test_db")
+        mock_client_instance.get_all_tables.assert_called_once_with(
+            "@analytics#test_db"
+        )
         request = mock_client_instance.get_table_objects_by_name_req.call_args.args[0]
         assert request.dbName == "test_db"
         assert request.tblNames == ["table1", "table2", "table3"]
@@ -147,7 +193,9 @@ class TestHive4Namespace:
             parameters={"table_type": "lance", "version": "1"},
         )
         mock_client_instance = MagicMock()
-        mock_client_instance.get_table_req.return_value = SimpleNamespace(table=mock_table)
+        mock_client_instance.get_table_req.return_value = SimpleNamespace(
+            table=mock_table
+        )
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         with patch.object(hive4, "HIVE4_REQUESTS_AVAILABLE", True):
@@ -170,7 +218,9 @@ class TestHive4Namespace:
             parameters={"table_type": "lance"},
         )
         mock_client_instance = MagicMock()
-        mock_client_instance.get_table_req.return_value = SimpleNamespace(table=mock_table)
+        mock_client_instance.get_table_req.return_value = SimpleNamespace(
+            table=mock_table
+        )
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         with patch.object(hive4, "HIVE4_REQUESTS_AVAILABLE", True):
@@ -192,7 +242,9 @@ class TestHive4Namespace:
             parameters={"table_type": "lance"},
         )
         mock_client_instance = MagicMock()
-        mock_client_instance.get_table_req.return_value = SimpleNamespace(table=mock_table)
+        mock_client_instance.get_table_req.return_value = SimpleNamespace(
+            table=mock_table
+        )
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         with patch.object(hive4, "HIVE4_REQUESTS_AVAILABLE", True):

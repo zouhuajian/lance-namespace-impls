@@ -23,14 +23,15 @@ Usage:
     response = namespace.list_namespaces(ListNamespacesRequest())
 
 Configuration Properties:
-    uri (str): Hive Metastore Thrift URI (e.g., "thrift://localhost:9083")
+    uri (str): Hive Metastore Thrift URI or comma-separated URI list
+        (e.g., "thrift://localhost:9083" or
+        "thrift://host1:9083,thrift://host2:9083")
     root (str): Storage root location of the lakehouse on Hive catalog (default: current working directory)
     ugi (str): Optional User Group Information for authentication (format: "user:group1,group2")
     client.pool-size (int): Size of the HMS client connection pool (default: 3)
 """
 
 from typing import List, Optional
-from urllib.parse import urlparse
 import os
 import logging
 
@@ -85,6 +86,11 @@ from lance_namespace_urllib3_client.models import (
 )
 
 from lance_namespace_impls.rest_client import InvalidInputException
+from lance_namespace_impls.hive_uri import (
+    DEFAULT_HIVE_METASTORE_URI,
+    get_hive_metastore_uri,
+    parse_hive_metastore_uris,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,18 +114,32 @@ class HiveMetastoreClientWrapper:
 
         self._uri = uri
         self._ugi = ugi.split(":") if ugi else None
-        url_parts = urlparse(self._uri)
-        self._host = url_parts.hostname or "localhost"
-        self._port = url_parts.port or 9083
+        self._endpoints = parse_hive_metastore_uris(self._uri)
+        self._host = self._endpoints[0].host
+        self._port = self._endpoints[0].port
         self._client = None
 
     def __enter__(self):
         """Enter context manager."""
-        self._client = Client(host=self._host, port=self._port)
-        self._client.open()
-        if self._ugi:
-            self._client.set_ugi(*self._ugi)
-        return self._client
+        last_error = None
+        for endpoint in self._endpoints:
+            client = Client(host=endpoint.host, port=endpoint.port)
+            try:
+                client.open()
+                if self._ugi:
+                    client.set_ugi(*self._ugi)
+                self._client = client
+                self._host = endpoint.host
+                self._port = endpoint.port
+                return self._client
+            except Exception as exc:
+                last_error = exc
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+        raise last_error or RuntimeError("Failed to connect to Hive metastore")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager."""
@@ -141,7 +161,7 @@ class Hive2Namespace(LanceNamespace):
         """Initialize the Hive2 namespace.
 
         Args:
-            uri: The Hive Metastore URI (e.g., "thrift://localhost:9083")
+            uri: The Hive Metastore URI or comma-separated URI list
             root: Storage root location of the lakehouse on Hive catalog (optional)
             ugi: User Group Information for authentication (optional, format: "user:group1,group2")
             client.pool-size: Size of the HMS client connection pool (optional, default: 3)
@@ -153,7 +173,7 @@ class Hive2Namespace(LanceNamespace):
                 "pip install 'lance-namespace[hive2]'"
             )
 
-        self.uri = properties.get("uri", "thrift://localhost:9083")
+        self.uri = get_hive_metastore_uri(properties, DEFAULT_HIVE_METASTORE_URI)
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
